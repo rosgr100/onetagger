@@ -11,17 +11,16 @@ permissions:
   contents: read
 
 jobs:
-  build-linux:
-    name: Linux
-    runs-on: ubuntu-22.04
+  build-mac-universal:
+    name: macOS
+    runs-on: macos-14
 
     steps:
+    - name: Checkout v4
+      uses: actions/checkout@v4 # Use the latest checkout action for better performance and reliability
 
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Rust Cache
-      uses: actions/cache@v4
+    - name: Rust Cache v4
+      uses: actions/cache@v4 # Use the latest cache action for improved caching performance and reliability
       with:
         path: |
           ~/.cargo/bin/
@@ -31,193 +30,93 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Install dependencies
+    - name: Initialize & update the default Rust toolchain
       run: |
-        sudo apt update
-        sudo apt install -y lld autogen libasound2-dev pkg-config make libssl-dev gcc g++ curl wget git libwebkit2gtk-4.1-dev
-
-    - name: Install NodeJS
-      uses: actions/setup-node@v4
-      with:
-        node-version: 18
-
-    - name: Install pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        version: 8
-
-    - name: Build
-      run: |
-        cd client
-        pnpm i
-        pnpm run build
-        cd ..
-        cargo update
-        cargo build --release
-
-    - name: Bundle
-      run: |
-        tar zcf OneTagger-linux.tar.gz -C target/release onetagger
-        tar zcf OneTagger-linux-cli.tar.gz -C target/release onetagger-cli
-        mkdir dist
-        mv OneTagger-linux.tar.gz dist/
-        mv OneTagger-linux-cli.tar.gz dist/
-    
-    - name: Upload Linux
-      uses: actions/upload-artifact@v4
-      with:
-        name: onetagger-linux
-        path: dist/OneTagger-linux.tar.gz
-    
-    - name: Upload Linux CLI
-      uses: actions/upload-artifact@v4
-      with:
-        name: onetagger-linux-cli
-        path: dist/OneTagger-linux-cli.tar.gz
-
-  build-win:
-    name: Windows
-    runs-on: windows-2022
-    
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Rust Cache
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Install NodeJS
-      uses: actions/setup-node@v4
-      with:
-        node-version: 18
-
-    - name: Install pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        version: 8
-
-    - name: Install Dependencies
-      run: |
-        choco install nsis -y
-        rustup update
-
-    - name: Build
-      run: |
-        cd client
-        pnpm i
-        pnpm run build
-        cd ..
-        cargo update
-        cargo build --release
+        rustup update stable
+        rustup default stable
         
-    - name: Bundle
-      run: |
-        mkdir dist
-        powershell -command "(new-object System.Net.WebClient).DownloadFile('https://aka.ms/vs/16/release/vc_redist.x64.exe','vc_redist.x64.exe')"
-        powershell -command "(new-object System.Net.WebClient).DownloadFile('https://go.microsoft.com/fwlink/p/?LinkId=2124703','MicrosoftEdgeWebview2Setup.exe')"
-        &'C:\Program Files (x86)\NSIS\makensis.exe' 'assets\installer.nsi'
-        copy target\release\onetagger.exe dist\OneTagger-windows.exe
-        copy target\release\onetagger-cli.exe dist\OneTagger-windows-cli.exe
-
-    - name: Upload Archive
-      uses: actions/upload-artifact@v4
-      with:
-        name: onetagger-win
-        path: | 
-          dist/OneTagger-windows.exe
+        source "$HOME/.cargo/env"
+        
+        rustup target add x86_64-apple-darwin
+        rustup target add aarch64-apple-darwin
+        
+        if ! command -v cargo-bundle &> /dev/null; then
+          cargo install cargo-bundle --version 0.6.1 --locked
+        fi
     
-    - name: Upload Archive
-      uses: actions/upload-artifact@v4
-      with:
-        name: onetagger-win-setup
-        path: dist/OneTagger-windows-setup.exe
-
-    - name: Upload CLI
-      uses: actions/upload-artifact@v4
-      with:
-        name: onetagger-win-cli
-        path: |
-          dist/OneTagger-windows-cli.exe
-
-  build-mac:
-    name: Mac
-    runs-on: macos-latest
-
-    steps:
-
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Rust Cache
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Install dependencies
-      run: |
-        brew install rustup
-        rustup install stable
-        cargo install cargo-bundle --version 0.6.1 --locked || true
-    
-    - name: Install NodeJS
+    - name: Install NodeJS 18
       uses: actions/setup-node@v4
       with:
         node-version: 18
 
-    - name: Install pnpm
+    - name: Install pnpm 8
       uses: pnpm/action-setup@v4
       with:
         version: 8
 
-    - name: Build
+    - name: Build UI via PNPM
       run: |
         cd client
         pnpm i
         pnpm run build
+        
+    - name: Build macOS Intel & Apple Silicon Architecture Binaries
+      run: |
+        source "$HOME/.cargo/env"
+
+        cd client
         cd ..
         cargo update
-        cargo build --release
-        cargo bundle --release
 
-    - name: Bundle
+        # Intel x86_64
+        cargo build --release --target x86_64-apple-darwin
+        cargo bundle --release --target x86_64-apple-darwin
+
+        # Apple Silicon (M1/M2/M3/M4/M5 etc)
+        cargo build --release --target aarch64-apple-darwin
+        cargo bundle --release --target aarch64-apple-darwin
+
+    - name: Create Universal Bundle
       run: |
         mkdir dist
 
-        cd target/release/bundle/osx
+        # Use the compiled ARM64 App bundle structure as our template base
+        cp -R target/aarch64-apple-darwin/release/bundle/osx/OneTagger.app .
+
+        # Combine the main application binary inside the app bundle template
+        lipo -create \
+          target/x86_64-apple-darwin/release/bundle/osx/OneTagger.app/Contents/MacOS/onetagger \
+          target/aarch64-apple-darwin/release/bundle/osx/OneTagger.app/Contents/MacOS/onetagger \
+          -output OneTagger.app/Contents/MacOS/onetagger
+
+        # Combine the standalone CLI binary
+        lipo -create \
+          target/x86_64-apple-darwin/release/onetagger-cli \
+          target/aarch64-apple-darwin/release/onetagger-cli \
+          -output onetagger-cli
+
+        # Verify that they are now universal binaries
+        file OneTagger.app/Contents/MacOS/onetagger
+        file onetagger-cli
+
+        # Grant execution permissions now that the universal files exist
         chmod +x OneTagger.app/Contents/MacOS/onetagger
-        zip -r OneTagger-mac.zip .
-        cd -
-
-        cd target/release
         chmod +x onetagger-cli
-        zip OneTagger-mac-cli.zip onetagger-cli
-        cd -
 
-        mv target/release/bundle/osx/OneTagger-mac.zip dist/
-        mv target/release/OneTagger-mac-cli.zip dist/
+        # Package the Universal App Bundle
+        zip -r dist/OneTagger-mac-universal.zip OneTagger.app
 
-    - name: Upload Mac
+        # Package the Universal CLI Binary
+        zip dist/OneTagger-mac-universal-cli.zip onetagger-cli
+
+    - name: Upload Universal Mac App
       uses: actions/upload-artifact@v4
       with:
-        name: onetagger-mac
-        path: dist/OneTagger-mac.zip
+        name: onetagger-mac-universal
+        path: dist/OneTagger-mac-universal.zip
 
-    - name: Upload Mac CLI
+    - name: Upload Universal Mac CLI
       uses: actions/upload-artifact@v4
       with:
-        name: onetagger-mac-cli
-        path: dist/OneTagger-mac-cli.zip
+        name: onetagger-mac-universal-cli
+        path: dist/OneTagger-mac-universal-cli.zip
